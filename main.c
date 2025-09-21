@@ -1,58 +1,128 @@
-//dieu khien 8 led
+#include "stm32f10x.h"
 #include "stm32f10x_gpio.h"
-#include "stm32f10x_rcc.h"
+#include "stm32f10x_usart.h"
+#include "string.h"
+#include "misc.h"
 
-uint16_t sangdan[8]={0xFE, 0xFC, 0xF8, 0xF0, 0xE0, 0xC0, 0x80, 0x00};
-void Delay(uint32_t);
-void GPIO_Config(void);
-void Clock_Config(void);
+#define LED GPIO_Pin_5
+#define TX GPIO_Pin_9
+#define RX GPIO_Pin_10
 
-int main(void){
-    Clock_Config(); // configuraion clock
-    SystemCoreClockUpdate(); // update SystemCoreClock varibale
-    GPIO_Config();
-    
-    while(1){
-        for( int i = 0; i < 8; i++){
-            GPIO_Write(GPIOC, sangdan[i]);
-            Delay(100);   
+ char command[16];
+ int idx = 0;
+ int ready = 0;
+
+void GPIO_Config(void)
+{
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO, ENABLE);
+    GPIO_InitTypeDef g;
+
+    g.GPIO_Pin = LED;
+    g.GPIO_Mode = GPIO_Mode_Out_PP;
+    g.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &g);
+
+    g.GPIO_Pin = TX;
+    g.GPIO_Mode = GPIO_Mode_AF_PP;
+    g.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_Init(GPIOA, &g);
+
+    g.GPIO_Pin = RX;
+    g.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    GPIO_Init(GPIOA, &g);
+}
+
+void UART_Config(void)
+{
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_USART1, ENABLE);
+    USART_InitTypeDef usart;
+    USART_StructInit(&usart);
+
+    usart.USART_BaudRate = 115200;
+    usart.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+    usart.USART_Parity = USART_Parity_No;
+    usart.USART_WordLength = USART_WordLength_8b;
+    usart.USART_StopBits = USART_StopBits_1;
+    usart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+
+    USART_Init(USART1, &usart);
+
+    NVIC_InitTypeDef nvic;
+    nvic.NVIC_IRQChannel = USART1_IRQn;
+    nvic.NVIC_IRQChannelPreemptionPriority = 0;
+    nvic.NVIC_IRQChannelSubPriority = 0;
+    nvic.NVIC_IRQChannelCmd = ENABLE;
+    NVIC_Init(&nvic);
+    USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
+    USART_Cmd(USART1, ENABLE);
+}
+
+void Print_Char(char c)
+{
+    while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
+    USART_SendData(USART1, (uint16_t)c);
+}
+
+void Print_String(char *s)
+{
+    while (*s)
+    {
+        Print_Char(*s++);
+    }
+}
+
+void USART1_IRQHandler(void)
+{
+    if (USART_GetITStatus(USART1, USART_IT_RXNE) == SET)
+    {
+        char c = (char)USART_ReceiveData(USART1);
+        if (c == '\n')
+        {
+            command[idx] = '\0';
+            ready = 1;
+            Print_String("\n\r");
+        }
+        else if (c == '\r')
+        {
+        }
+        else
+        {
+            if(idx < 16){
+				command[idx++] = c;
+				Print_Char(c);
+			}
         }
     }
 }
-/*Delay tuong doi*/
-void Delay(uint32_t t){
-    unsigned int i,j;
-    
-    for(i=0;i<t;i++){
-        for(j=0;j< 0x2AFF; j++);
-    }
 
-}
-void GPIO_Config(){
-    GPIO_InitTypeDef GPIO_InitStructure;
-    /*enble clock for GPIOC*/
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC, ENABLE);
-    /*Configuration GPIO pin*/
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_PP;
-    GPIO_InitStructure.GPIO_Pin  = GPIO_Pin_0 | GPIO_Pin_1 | GPIO_Pin_2 | GPIO_Pin_3 | GPIO_Pin_4 | GPIO_Pin_5 | GPIO_Pin_6 | GPIO_Pin_7;
-    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_2MHz;
-    GPIO_Init(GPIOC, &GPIO_InitStructure);
-}
-void Clock_Config(void){
-    /* RCC system reset */
-    RCC_DeInit();
-    /* HCLK = SYSCLK */
-    RCC_HCLKConfig(RCC_SYSCLK_Div1); 
-    /* PCLK2 = HCLK */
-    RCC_PCLK2Config(RCC_HCLK_Div2);
-    /* PCLK1 = HCLK/2 */
-    RCC_PCLK1Config(RCC_HCLK_Div2);
-    /*enable HSI source clock*/
-    RCC_HSICmd(ENABLE); 
-    /* Wait till PLL is ready */
-    while (RCC_GetFlagStatus(RCC_FLAG_HSIRDY) == RESET){}
-    /* Select PLL as system clock source */
-    RCC_SYSCLKConfig(RCC_SYSCLKSource_HSI);
-    /* Wait till PLL is used as system clock source */
-    while(RCC_GetSYSCLKSource() != 0x00) {}    
+int main(void)
+{
+    GPIO_Config();
+    UART_Config();
+    GPIO_ResetBits(GPIOA, LED);
+    Print_String("Hello FROM STM32 !\r\n");
+    while (1)
+    {
+        if (ready)
+        {
+            if (strcmp(command, "ON") == 0)
+            {
+                GPIO_SetBits(GPIOA, LED);
+                Print_String("LED ON\r\n");
+            }
+            else if (strcmp(command, "OFF") == 0)
+            {
+                GPIO_ResetBits(GPIOA, LED);
+                Print_String("LED OFF\r\n");
+            }
+            else
+            {
+                Print_String("Invalid command\r\n");
+            }
+            ready = 0;
+            idx = 0;
+            memset(command, 0, 16);
+
+        }
+    }
 }
